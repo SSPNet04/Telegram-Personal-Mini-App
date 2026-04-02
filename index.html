@@ -3,14 +3,16 @@
 <head>
   <meta charset="UTF-8" />
   <title>Telegram Counter Mini App</title>
-
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-
 
   <!-- Telegram Mini App SDK -->
   <script src="https://telegram.org/js/telegram-web-app.js?59"></script>
 
   <style>
+    html, body {
+      touch-action: manipulation;
+    }
+
     body {
       margin: 0;
       font-family: Arial, sans-serif;
@@ -18,9 +20,10 @@
       color: var(--tg-theme-text-color, #000000);
       display: flex;
       flex-direction: column;
-      justify-content: center;
       align-items: center;
-      height: 100vh;
+      min-height: 100vh;
+      padding: 24px 16px 60px;
+      box-sizing: border-box;
     }
 
     h1 {
@@ -32,69 +35,354 @@
       margin: 20px 0;
     }
 
-    button {
-      font-size: 20px;
-      padding: 10px 20px;
-      margin: 5px;
-      cursor: pointer;
+    #starting_money {
+      font-size: 14px;
+      opacity: 0.6;
+      margin-bottom: 8px;
     }
-    
-    html, body {
-      touch-action: manipulation;
+
+    #save_feedback {
+      font-size: 13px;
+      color: green;
+      height: 18px;
+      margin-top: 4px;
+    }
+
+    #save_btn {
+      margin-top: 8px;
+      font-size: 16px;
+      padding: 8px 24px;
+      cursor: pointer;
+      background: var(--tg-theme-button-color, #2481cc);
+      color: var(--tg-theme-button-text-color, #ffffff);
+      border: none;
+      border-radius: 8px;
+    }
+
+    #transactions_section {
+      width: 100%;
+      max-width: 360px;
+      margin-top: 24px;
+    }
+
+    #transactions_section h3 {
+      margin: 0 0 8px;
+      font-size: 14px;
+      opacity: 0.7;
+    }
+
+    #transactions_table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 14px;
+    }
+
+    #transactions_table th {
+      text-align: left;
+      padding: 4px 8px;
+      border-bottom: 1px solid currentColor;
+      opacity: 0.5;
+      font-weight: normal;
+    }
+
+    #transactions_table td {
+      padding: 6px 8px;
+      border-bottom: 1px solid rgba(128,128,128,0.2);
+    }
+
+    #transactions_table .spent {
+      color: #e53935;
+    }
+
+    #transactions_table .gained {
+      color: #43a047;
+    }
+
+    #transactions_table tfoot td {
+      font-weight: bold;
+      border-top: 1px solid currentColor;
+      border-bottom: none;
+      padding-top: 8px;
+    }
+
+    #test_controls {
+      position: fixed;
+      bottom: 12px;
+      left: 50%;
+      transform: translateX(-50%);
+      font-size: 11px;
+      opacity: 0.5;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    #test_controls label {
+      white-space: nowrap;
+    }
+
+    #clear_cache_btn {
+      font-size: 11px;
+      padding: 2px 8px;
+      cursor: pointer;
+      background: transparent;
+      color: #e53935;
+      border: 1px solid #e53935;
+      border-radius: 4px;
     }
   </style>
 </head>
 
 <body>
-  <h1 id="date">Checking App</h1>
-  <div><input oninput="updateUI()" type="number" id="current_value" placeholder="0"></div>
-
+  <h1 id="date"></h1>
+  <div id="starting_money"></div>
+  <div><input type="number" id="current_actual_remaining" placeholder="0"></div>
+  <button id="save_btn">Save</button>
+  <div id="save_feedback"></div>
   <div class="counter" id="count">0</div>
   <div id="per_day"></div>
 
+  <div id="transactions_section" style="display:none">
+    <h3>Today's transactions</h3>
+    <table id="transactions_table">
+      <thead>
+        <tr>
+          <th>Time</th>
+          <th>Balance</th>
+          <th>Spent</th>
+          <th>Remaining</th>
+        </tr>
+      </thead>
+      <tbody id="transactions_body"></tbody>
+      <tfoot id="transactions_footer"></tfoot>
+    </table>
+  </div>
+
+  <!-- Testing only (disabled)
+  <div id="test_controls">
+    <label for="test_date">Test date:</label>
+    <input type="date" id="test_date">
+    <button id="clear_cache_btn">Clear Cache</button>
+  </div>
+  -->
+
   <script>
-    // Initialize Telegram Mini App
     const tg = window.Telegram.WebApp;
-    const dailyBudget = 200;
-    const maxBudget = 6000;
 
-    let dateToday = new Date();
-    let fullDate = dateToday.toLocaleDateString();
-    document.getElementById("date").innerText = fullDate;
+    const DAILY_BUDGET = 200;
+    const MAX_BUDGET = 6000;
+    const STORAGE_KEY = 'saved_money';
+    const STARTING_KEY_PREFIX = 'start_'; // start_YYYY-MM-DD
 
-    let today = dateToday.getDate();
+    // module-level so handleSave can access the current starting money
+    let activeStartingMoney = null;
 
-    let lastDayOfMonth = new Date(dateToday.getFullYear(),dateToday.getMonth()+1,0);
-    let dayInMonth = lastDayOfMonth.getDate();
-    let remainingDay = dayInMonth - dateToday.getDate();
-
-    const budget = Math.min(dayInMonth * dailyBudget, maxBudget);
-    const earnBudget = today * dailyBudget;
-
-    tg.ready();
-    updateUI();
-
-    function debug(){
-      let remaining = (earnBudget - budget) + getCurrentValue();
-      console.log("Remaining: "+remaining);
-      console.log("Earn Budget: "+earnBudget);
+    function toDateKey(date) {
+      return date.toISOString().slice(0, 10);
     }
 
-    function updateUI() {
-      //debug();
-      let current = getCurrentValue();
-      let remaining = (earnBudget - budget) + current;
+    function getActiveDate() {
+      return new Date();
+    }
+
+    // ── Saved money (end-of-day snapshot) ────────────────────────────────────
+
+    function saveMoney(amount) {
+      const entry = { date: toDateKey(getActiveDate()), amount };
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(entry));
+    }
+
+    function loadSavedMoney() {
+      const raw = localStorage.getItem(STORAGE_KEY);
+      if (!raw) return null;
+      return JSON.parse(raw).amount;
+    }
+
+    // Returns the starting money for today, locking it into its own key on first access
+    // so subsequent saves (which overwrite STORAGE_KEY) can't affect it.
+    function getStartingMoney(activeDate) {
+      const key = STARTING_KEY_PREFIX + toDateKey(activeDate);
+      const locked = localStorage.getItem(key);
+      if (locked !== null) return Number(locked);
+
+      // First time today — check if yesterday's snapshot exists
+      const raw = localStorage.getItem(STORAGE_KEY);
+      if (!raw) return null;
+
+      const { date, amount } = JSON.parse(raw);
+      const yesterday = new Date(activeDate);
+      yesterday.setDate(yesterday.getDate() - 1);
+
+      if (date !== toDateKey(yesterday)) return null;
+
+      // Lock it in for the rest of the day
+      localStorage.setItem(key, amount);
+      return amount;
+    }
+
+    // ── Transactions ──────────────────────────────────────────────────────────
+
+    function transactionsKey(date) {
+      return `transactions_${toDateKey(date)}`;
+    }
+
+    function loadTransactions(date) {
+      const raw = localStorage.getItem(transactionsKey(date));
+      return raw ? JSON.parse(raw) : [];
+    }
+
+    function recordTransaction(date, newValue) {
+      const transactions = loadTransactions(date);
+      const previousValue = transactions.length > 0
+        ? transactions[transactions.length - 1].balance
+        : activeStartingMoney;
+
+      const spent = previousValue - newValue; // positive = spent money
+      const time = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+      transactions.push({ time, balance: newValue, spent });
+      localStorage.setItem(transactionsKey(date), JSON.stringify(transactions));
+    }
+
+    // ── Save handler ──────────────────────────────────────────────────────────
+
+    function handleSave(input) {
+      const amount = getCurrentRemaining();
+      const date = getActiveDate();
+
+      // Determine the latest recorded value to check for duplicates
+      const transactions = loadTransactions(date);
+      const latestValue = transactions.length > 0
+        ? transactions[transactions.length - 1].balance
+        : activeStartingMoney !== null
+          ? activeStartingMoney
+          : loadSavedMoney();
+
+      if (amount === latestValue) {
+        input.blur();
+        return;
+      }
+
+      saveMoney(amount);
+
+      if (activeStartingMoney === null) {
+        // First save of the day with no prior snapshot — treat it as starting money
+        localStorage.setItem(STARTING_KEY_PREFIX + toDateKey(date), amount);
+      } else {
+        recordTransaction(date, amount);
+      }
+
+      showSaveFeedback();
+      input.blur();
+      render();
+    }
+
+    function showSaveFeedback() {
+      const el = document.getElementById("save_feedback");
+      el.innerText = "Saved";
+      setTimeout(() => { el.innerText = ""; }, 2000);
+    }
+
+    // ── Render ────────────────────────────────────────────────────────────────
+
+    function render() {
+      const today = getActiveDate();
+      const dayOfMonth = today.getDate();
+      const daysInMonth = new Date(today.getFullYear(), today.getMonth() + 1, 0).getDate();
+      const remainingDays = daysInMonth - dayOfMonth;
+
+      const monthlyBudget = Math.min(daysInMonth * DAILY_BUDGET, MAX_BUDGET);
+      const earnedBudget = dayOfMonth * DAILY_BUDGET;
+
+      document.getElementById("date").innerText = today.toLocaleDateString();
+
+      activeStartingMoney = getStartingMoney(today);
+      document.getElementById("starting_money").innerText =
+        activeStartingMoney !== null ? `Starting money: ${activeStartingMoney}` : "";
+
+      updateUI(earnedBudget, monthlyBudget, remainingDays);
+      renderTransactions(today, earnedBudget, monthlyBudget);
+    }
+
+    function updateUI(earnedBudget, monthlyBudget, remainingDays) {
+      const current = getCurrentRemaining();
+      const remaining = (earnedBudget - monthlyBudget) + current;
+      const base = activeStartingMoney !== null ? activeStartingMoney : current;
 
       document.getElementById("count").innerText = remaining;
-      document.getElementById("per_day").innerText = Math.min(current / (remainingDay+1),200);
+      document.getElementById("per_day").innerText = Math.min(base / (remainingDays + 1), DAILY_BUDGET);
     }
 
-    function getCurrentValue(){
-      let currentValue = Number(document.getElementById("current_value").value);
-      return currentValue;
-    }
-    
+    function renderTransactions(date, earnedBudget, monthlyBudget) {
+      const transactions = loadTransactions(date);
+      const section = document.getElementById("transactions_section");
 
+      if (transactions.length === 0 || activeStartingMoney === null) {
+        section.style.display = "none";
+        return;
+      }
+
+      section.style.display = "block";
+
+      const tbody = document.getElementById("transactions_body");
+      tbody.innerHTML = "";
+
+      let totalSpent = 0;
+
+      for (const tx of transactions) {
+        const tr = document.createElement("tr");
+        const spentClass = tx.spent >= 0 ? "spent" : "gained";
+        const remaining = (earnedBudget - monthlyBudget) + tx.balance;
+        tr.innerHTML = `
+          <td>${tx.time}</td>
+          <td>${tx.balance}</td>
+          <td class="${spentClass}">${tx.spent}</td>
+          <td>${remaining}</td>
+        `;
+        tbody.appendChild(tr);
+        totalSpent += tx.spent;
+      }
+
+      const totalClass = totalSpent >= 0 ? "spent" : "gained";
+      document.getElementById("transactions_footer").innerHTML = `
+        <tr>
+          <td colspan="2">Total spent</td>
+          <td class="${totalClass}">${totalSpent}</td>
+          <td></td>
+        </tr>
+      `;
+    }
+
+    // ── Init ──────────────────────────────────────────────────────────────────
+
+    function init() {
+      const input = document.getElementById("current_actual_remaining");
+
+      const savedMoney = loadSavedMoney();
+      if (savedMoney !== null) {
+        input.value = savedMoney;
+      }
+
+      input.addEventListener("input", render);
+
+      input.addEventListener("keydown", (e) => {
+        if (e.key === "Enter") handleSave(input);
+      });
+
+      document.getElementById("save_btn").addEventListener("click", () => {
+        handleSave(input);
+      });
+
+
+      tg.ready();
+      render();
+    }
+
+    function getCurrentRemaining() {
+      return Number(document.getElementById("current_actual_remaining").value);
+    }
+
+    init();
   </script>
 </body>
 </html>
