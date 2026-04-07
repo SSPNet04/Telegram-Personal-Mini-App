@@ -366,7 +366,8 @@
     const DAILY_BUDGET = 200;
     const MAX_BUDGET = 6000;
     const STORAGE_KEY = 'saved_money';
-    const STARTING_KEY_PREFIX = 'start_'; // start_YYYY-MM-DD
+    const STARTING_KEY_PREFIX = 'start_';       // start_YYYY-MM-DD
+    const TRANSACTIONS_KEY_PREFIX = 'transactions_'; // transactions_YYYY-MM-DD
 
     // module-level so handleSave can access the current starting money
     let activeStartingMoney = null;
@@ -430,7 +431,7 @@
     // ── Transactions ──────────────────────────────────────────────────────────
 
     function transactionsKey(date) {
-      return `transactions_${toDateKey(date)}`;
+      return TRANSACTIONS_KEY_PREFIX + toDateKey(date);
     }
 
     function loadTransactions(date) {
@@ -586,7 +587,7 @@
       const keys = [];
       for (let i = 0; i < localStorage.length; i++) {
         const k = localStorage.key(i);
-        if (k && k.startsWith('transactions_')) keys.push(k.replace('transactions_', ''));
+        if (k && k.startsWith(TRANSACTIONS_KEY_PREFIX)) keys.push(k.slice(TRANSACTIONS_KEY_PREFIX.length));
       }
       return keys.sort().reverse(); // newest first
     }
@@ -617,7 +618,7 @@
 
       let html = '';
       for (const dateStr of dates) {
-        const txs = JSON.parse(localStorage.getItem('transactions_' + dateStr) || '[]');
+        const txs = JSON.parse(localStorage.getItem(TRANSACTIONS_KEY_PREFIX + dateStr) || '[]');
         if (txs.length === 0) continue;
 
         const label = new Date(dateStr + 'T00:00:00').toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' });
@@ -657,7 +658,7 @@
     }
 
     function deleteTransaction(dateStr, idx) {
-      const key = 'transactions_' + dateStr;
+      const key = TRANSACTIONS_KEY_PREFIX + dateStr;
       const txs = JSON.parse(localStorage.getItem(key) || '[]');
       txs.splice(idx, 1);
       if (txs.length === 0) {
@@ -665,7 +666,7 @@
       } else {
         localStorage.setItem(key, JSON.stringify(txs));
       }
-      refreshHistoryAfterClear();
+      refreshHistoryPanel();
       render();
     }
 
@@ -673,7 +674,7 @@
       const toRemove = [];
       for (let i = 0; i < localStorage.length; i++) {
         const k = localStorage.key(i);
-        if (k && (k.startsWith('transactions_') || k.startsWith('start_'))) {
+        if (k && (k.startsWith(TRANSACTIONS_KEY_PREFIX) || k.startsWith(STARTING_KEY_PREFIX))) {
           toRemove.push(k);
         }
       }
@@ -681,48 +682,31 @@
       localStorage.removeItem(STORAGE_KEY);
     }
 
-    function refreshHistoryAfterClear() {
+    // Repopulates the month select and renders the most recent month.
+    // Does NOT call render() — callers are responsible for that.
+    function refreshHistoryPanel() {
       const months = getAvailableMonths();
       const select = document.getElementById("history_month_select");
+
+      if (months.length === 0) {
+        select.innerHTML = '<option value="">No history yet</option>';
+        document.getElementById("history_content").innerHTML =
+          '<div id="history_empty">No transactions recorded yet.</div>';
+        return;
+      }
+
       select.innerHTML = months.map(m => {
         const [year, mon] = m.split('-');
         const label = new Date(Number(year), Number(mon) - 1, 1)
           .toLocaleDateString([], { month: 'long', year: 'numeric' });
         return `<option value="${m}">${label}</option>`;
       }).join('');
-
-      if (months.length === 0) {
-        select.innerHTML = '<option value="">No history yet</option>';
-        document.getElementById("history_content").innerHTML =
-          '<div id="history_empty">No transactions recorded yet.</div>';
-      } else {
-        renderHistory(months[0]);
-      }
-
-      render(); // refresh main view in case today's data was cleared
+      renderHistory(months[0]);
     }
 
     function openHistory() {
-      const overlay = document.getElementById("history_overlay");
-      const select = document.getElementById("history_month_select");
-
-      const months = getAvailableMonths();
-      select.innerHTML = months.map(m => {
-        const [year, mon] = m.split('-');
-        const label = new Date(Number(year), Number(mon) - 1, 1)
-          .toLocaleDateString([], { month: 'long', year: 'numeric' });
-        return `<option value="${m}">${label}</option>`;
-      }).join('');
-
-      if (months.length === 0) {
-        select.innerHTML = '<option value="">No history yet</option>';
-        document.getElementById("history_content").innerHTML =
-          '<div id="history_empty">No transactions recorded yet.</div>';
-      } else {
-        renderHistory(months[0]);
-      }
-
-      overlay.classList.add("open");
+      refreshHistoryPanel();
+      document.getElementById("history_overlay").classList.add("open");
     }
 
     function closeHistory() {
@@ -731,11 +715,7 @@
 
     // ── Init ──────────────────────────────────────────────────────────────────
 
-    function init() {
-      const input = document.getElementById("current_actual_remaining");
-
-      input.value = 0;
-
+    function bindEvents(input) {
       document.getElementById("mode_toggle").addEventListener("click", (e) => {
         const btn = e.target.closest(".mode-btn");
         if (!btn) return;
@@ -757,18 +737,12 @@
       });
 
       input.addEventListener("input", render);
-
       input.addEventListener("keydown", (e) => {
         if (e.key === "Enter") handleSave(input);
       });
 
-      document.getElementById("save_btn").addEventListener("click", () => {
-        handleSave(input);
-      });
-
-      document.getElementById("set_start_btn").addEventListener("click", () => {
-        handleSetStartingMoney(input);
-      });
+      document.getElementById("save_btn").addEventListener("click", () => handleSave(input));
+      document.getElementById("set_start_btn").addEventListener("click", () => handleSetStartingMoney(input));
 
       document.getElementById("history_btn").addEventListener("click", openHistory);
       document.getElementById("history_close_btn").addEventListener("click", closeHistory);
@@ -778,47 +752,55 @@
       document.getElementById("history_month_select").addEventListener("change", (e) => {
         renderHistory(e.target.value);
       });
-
       document.getElementById("history_content").addEventListener("click", (e) => {
         const btn = e.target.closest(".history_delete_btn");
         if (!btn) return;
         deleteTransaction(btn.dataset.date, Number(btn.dataset.idx));
       });
-
       document.getElementById("history_clear_all_btn").addEventListener("click", () => {
         if (!confirm("Clear ALL transaction history? This cannot be undone.")) return;
         clearAllHistoryData();
-        refreshHistoryAfterClear();
+        refreshHistoryPanel();
+        render();
       });
+    }
 
-      if (TESTING) {
-        const controls = document.createElement("div");
-        controls.id = "test_controls";
-        controls.innerHTML = `
-          <label for="test_date">Test date:</label>
-          <input type="date" id="test_date">
-          <button id="clear_cache_btn">Clear Cache</button>
-        `;
-        document.body.appendChild(controls);
-        document.getElementById("test_date").addEventListener("change", () => {
-          const date = getActiveDate();
-          const txs = loadTransactions(date);
-          const input = document.getElementById("current_actual_remaining");
-          if (txs.length > 0) {
-            input.value = txs[txs.length - 1].balance;
-          } else {
-            const start = localStorage.getItem(STARTING_KEY_PREFIX + toDateKey(date));
-            input.value = start !== null ? start : '';
-          }
-          render();
-        });
-        document.getElementById("clear_cache_btn").addEventListener("click", () => {
-          if (confirm("Clear all localStorage?")) {
-            localStorage.clear();
-            location.reload();
-          }
-        });
-      }
+    function setupTestControls() {
+      const controls = document.createElement("div");
+      controls.id = "test_controls";
+      controls.innerHTML = `
+        <label for="test_date">Test date:</label>
+        <input type="date" id="test_date">
+        <button id="clear_cache_btn">Clear Cache</button>
+      `;
+      document.body.appendChild(controls);
+
+      const input = document.getElementById("current_actual_remaining");
+      document.getElementById("test_date").addEventListener("change", () => {
+        const date = getActiveDate();
+        const txs = loadTransactions(date);
+        if (txs.length > 0) {
+          input.value = txs[txs.length - 1].balance;
+        } else {
+          const start = localStorage.getItem(STARTING_KEY_PREFIX + toDateKey(date));
+          input.value = start !== null ? start : '';
+        }
+        render();
+      });
+      document.getElementById("clear_cache_btn").addEventListener("click", () => {
+        if (confirm("Clear all localStorage?")) {
+          localStorage.clear();
+          location.reload();
+        }
+      });
+    }
+
+    function init() {
+      const input = document.getElementById("current_actual_remaining");
+      input.value = 0;
+
+      bindEvents(input);
+      if (TESTING) setupTestControls();
 
       tg.ready();
       render();
