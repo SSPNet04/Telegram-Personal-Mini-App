@@ -48,6 +48,30 @@
       margin-top: 4px;
     }
 
+    #mode_toggle {
+      display: flex;
+      margin-top: 10px;
+      margin-bottom: 10px;
+      border: 1px solid var(--tg-theme-button-color, #2481cc);
+      border-radius: 8px;
+      overflow: hidden;
+    }
+
+    .mode-btn {
+      flex: 1;
+      font-size: 13px;
+      padding: 5px 0;
+      cursor: pointer;
+      background: transparent;
+      color: var(--tg-theme-button-color, #2481cc);
+      border: none;
+    }
+
+    .mode-btn.active {
+      background: var(--tg-theme-button-color, #2481cc);
+      color: var(--tg-theme-button-text-color, #ffffff);
+    }
+
     #save_btn {
       margin-top: 8px;
       font-size: 16px;
@@ -290,7 +314,11 @@
 <body>
   <h1 id="date"></h1>
   <div id="starting_money"></div>
-  <div><input type="number" id="current_actual_remaining" placeholder="0"></div>
+  <div id="mode_toggle">
+    <button class="mode-btn" data-mode="balance">Balance</button>
+    <button class="mode-btn active" data-mode="spent">Spent</button>
+  </div>
+  <div><input type="number" id="current_actual_remaining" placeholder="Amount spent"></div>
   <button id="save_btn">Save</button>
   <button id="set_start_btn">Set as starting money</button>
   <div id="save_feedback"></div>
@@ -342,6 +370,7 @@
 
     // module-level so handleSave can access the current starting money
     let activeStartingMoney = null;
+    let inputMode = 'spent'; // 'balance' | 'spent'
 
     function toDateKey(date) {
       const y = date.getFullYear();
@@ -425,7 +454,7 @@
     // ── Save handler ──────────────────────────────────────────────────────────
 
     function handleSave(input) {
-      const amount = getCurrentRemaining();
+      const amount = getEffectiveBalance();
       const date = getActiveDate();
 
       // Deduplicate only against the last transaction (not starting money)
@@ -460,7 +489,7 @@
     }
 
     function handleSetStartingMoney(input) {
-      const amount = getCurrentRemaining();
+      const amount = getEffectiveBalance();
       const date = getActiveDate();
 
       // Record a transaction first (while activeStartingMoney is still the old value)
@@ -504,7 +533,7 @@
     }
 
     function updateUI(earnedBudget, monthlyBudget, perDay) {
-      const current = getCurrentRemaining();
+      const current = getEffectiveBalance();
       const remaining = (earnedBudget - monthlyBudget) + current;
 
       document.getElementById("count").innerText = fmt(remaining);
@@ -705,10 +734,27 @@
     function init() {
       const input = document.getElementById("current_actual_remaining");
 
-      const savedMoney = loadSavedMoney();
-      if (savedMoney !== null) {
-        input.value = savedMoney;
-      }
+      input.value = 0;
+
+      document.getElementById("mode_toggle").addEventListener("click", (e) => {
+        const btn = e.target.closest(".mode-btn");
+        if (!btn) return;
+        inputMode = btn.dataset.mode;
+        document.querySelectorAll(".mode-btn").forEach(b => b.classList.toggle("active", b === btn));
+        input.placeholder = inputMode === 'spent' ? 'Amount spent' : 'Current balance';
+        if (inputMode === 'spent') {
+          input.value = 0;
+        } else {
+          const date = getActiveDate();
+          const txs = loadTransactions(date);
+          const lastBalance = txs.length > 0
+            ? txs[txs.length - 1].balance
+            : activeStartingMoney;
+          input.value = lastBalance !== null ? lastBalance : '';
+        }
+        input.focus();
+        render();
+      });
 
       input.addEventListener("input", render);
 
@@ -780,6 +826,20 @@
 
     function getCurrentRemaining() {
       return Number(document.getElementById("current_actual_remaining").value);
+    }
+
+    function getEffectiveBalance() {
+      const raw = getCurrentRemaining();
+      if (inputMode === 'spent') {
+        const date = getActiveDate();
+        const transactions = loadTransactions(date);
+        const prevBalance = transactions.length > 0
+          ? transactions[transactions.length - 1].balance
+          : activeStartingMoney;
+        if (prevBalance === null) return raw;
+        return prevBalance - raw;
+      }
+      return raw;
     }
 
     init();
