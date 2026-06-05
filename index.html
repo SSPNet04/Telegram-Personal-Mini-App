@@ -41,6 +41,12 @@
       margin-bottom: 8px;
     }
 
+    #per_day_tomorrow {
+      font-size: 14px;
+      opacity: 0.6;
+      margin-top: 4px;
+    }
+
     #save_feedback {
       font-size: 13px;
       color: green;
@@ -70,6 +76,18 @@
     .mode-btn.active {
       background: var(--tg-theme-button-color, #2481cc);
       color: var(--tg-theme-button-text-color, #ffffff);
+    }
+
+    #current_actual_remaining {
+      font-size: 22px;
+      padding: 10px 14px;
+      width: 200px;
+      text-align: center;
+      border: 1px solid var(--tg-theme-hint-color, #cccccc);
+      border-radius: 8px;
+      background: var(--tg-theme-bg-color, #ffffff);
+      color: var(--tg-theme-text-color, #000000);
+      box-sizing: border-box;
     }
 
     #save_btn {
@@ -324,6 +342,7 @@
   <div id="save_feedback"></div>
   <div class="counter" id="count">0</div>
   <div id="per_day"></div>
+  <div id="per_day_tomorrow"></div>
 
   <div id="transactions_section" style="display:none">
     <h3>Today's transactions</h3>
@@ -529,16 +548,25 @@
       const base = activeStartingMoney !== null ? activeStartingMoney : getCurrentRemaining();
       const perDay = Math.min(base / (remainingDays + 1), DAILY_BUDGET);
 
-      updateUI(earnedBudget, monthlyBudget, perDay);
+      // How much you can spend per day from tomorrow onward:
+      // remaining money divided by the days left this month, NOT counting today.
+      const currentBalance = getEffectiveBalance();
+      const perDayTomorrow = remainingDays > 0
+        ? Math.min(currentBalance / remainingDays, DAILY_BUDGET)
+        : null;
+
+      updateUI(earnedBudget, monthlyBudget, perDay, perDayTomorrow);
       renderTransactions(today, perDay);
     }
 
-    function updateUI(earnedBudget, monthlyBudget, perDay) {
+    function updateUI(earnedBudget, monthlyBudget, perDay, perDayTomorrow) {
       const current = getEffectiveBalance();
       const remaining = (earnedBudget - monthlyBudget) + current;
 
       document.getElementById("count").innerText = fmt(remaining);
       document.getElementById("per_day").innerText = fmt(perDay);
+      document.getElementById("per_day_tomorrow").innerText =
+        perDayTomorrow !== null ? `From tomorrow: ${fmt(perDayTomorrow)} / day` : "";
     }
 
     function renderTransactions(date, perDay) {
@@ -723,7 +751,7 @@
         document.querySelectorAll(".mode-btn").forEach(b => b.classList.toggle("active", b === btn));
         input.placeholder = inputMode === 'spent' ? 'Amount spent' : 'Current balance';
         if (inputMode === 'spent') {
-          input.value = 0;
+          input.value = '';
         } else {
           const date = getActiveDate();
           const txs = loadTransactions(date);
@@ -797,7 +825,7 @@
 
     function init() {
       const input = document.getElementById("current_actual_remaining");
-      input.value = 0;
+      input.value = '';
 
       bindEvents(input);
       if (TESTING) setupTestControls();
